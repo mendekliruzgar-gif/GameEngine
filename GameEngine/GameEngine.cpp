@@ -1,42 +1,40 @@
 #include <glad/glad.h>
-#include <iostream>
 #include <glfw3.h>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+#include <iostream>
+#include <vector>
+#include <string>
 #include <fstream>
 #include <sstream>
-#include <string>
+#include <cmath>
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow* window);
-void drawTriangle(float x1, float y1, float x2, float y2, float x3, float y3, GLint anchorLoc, GLint xAxisLoc, GLint yAxisLoc);
-void drawRectangle(float x, float y, float width, float height, GLint anchorLoc, GLint xAxisLoc, GLint yAxisLoc);
+std::string LoadShader(const char* aPath);
 void checkGlError(const std::string& context);
 
-bool roofColorToggle = false;
+bool isPerspective = true;
+bool spacePressedLastFrame = false;
 
-std::string LoadShader(const char* aPath)
-{
-    std::string shaderCode;
-    std::ifstream shaderFile;
-
-    shaderFile.open(aPath);
-
-    std::stringstream shaderStream;
-    shaderStream << shaderFile.rdbuf();
-
-    shaderFile.close();
-    shaderCode = shaderStream.str();
-
-    return shaderCode;
-}
+const unsigned int SCR_WIDTH = 800;
+const unsigned int SCR_HEIGHT = 600;
 
 int main(void)
 {
-    GLFWwindow* window;
-
     if (!glfwInit())
         return -1;
 
-    window = glfwCreateWindow(640, 480, "Game Engine", NULL, NULL);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_DEPTH_BITS, 24);
+
+    GLFWwindow* window;
+    window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Game Engine", NULL, NULL);
     if (!window) {
         glfwTerminate();
         return -1;
@@ -49,6 +47,8 @@ int main(void)
         return -1;
 
     checkGlError("Init GLAD");
+
+    glEnable(GL_DEPTH_TEST);
 
     std::string vertexCode = LoadShader("Assets/Shaders/VertexShader.glsl");
     std::string fragmentCode = LoadShader("Assets/Shaders/FragmentShader.glsl");
@@ -93,89 +93,229 @@ int main(void)
     glDeleteShader(fragmentShader);
     checkGlError("Shader Setup");
 
-    float baseTriangle[] = {
-        0.0f, 0.0f, 0.0f,
-        1.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f
+    float cubeVertices[] = {
+		// positions          // colors
+        -0.3f, -0.3f, -0.3f,  1.0f, 0.0f, 0.0f,
+         0.3f, -0.3f, -0.3f,  0.0f, 1.0f, 0.0f,
+         0.3f,  0.3f, -0.3f,  0.0f, 0.0f, 1.0f,
+        -0.3f,  0.3f, -0.3f,  1.0f, 1.0f, 0.0f,
+        -0.3f, -0.3f,  0.3f,  1.0f, 0.0f, 1.0f,
+         0.3f, -0.3f,  0.3f,  0.0f, 1.0f, 1.0f,
+         0.3f,  0.3f,  0.3f,  0.5f, 0.5f, 0.5f,
+        -0.3f,  0.3f,  0.3f,  1.0f, 0.5f, 0.0f
+    };
+    unsigned int cubeIndices[] = {
+        0, 1, 2,  2, 3, 0,
+        4, 5, 6,  6, 7, 4,
+        0, 4, 7,  7, 3, 0,
+        1, 5, 6,  6, 2, 1,
+        3, 2, 6,  6, 7, 3,
+        0, 1, 5,  5, 4, 0
     };
 
-    unsigned int VBO, VAO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
+    unsigned int cubeVBO, cubeVAO, cubeEBO;
+    glGenVertexArrays(1, &cubeVAO);
+    glGenBuffers(1, &cubeVBO);
+    glGenBuffers(1, &cubeEBO);
 
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(baseTriangle), baseTriangle, GL_STATIC_DRAW);
+    glBindVertexArray(cubeVAO);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cubeEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
-    checkGlError("Buffer Setup");
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
 
-    GLint anchorLoc = glGetUniformLocation(shaderProgram, "anchor");
-    GLint xAxisLoc = glGetUniformLocation(shaderProgram, "xAxis");
-    GLint yAxisLoc = glGetUniformLocation(shaderProgram, "yAxis");
-    GLint colorLocation = glGetUniformLocation(shaderProgram, "uColor");
+    std::vector<float> sphereVertices;
+	std::vector<unsigned int> sphereIndices;
+    int sectorCount = 12;
+	int stackCount = 12;
+	float radius = 0.35f;
+
+	for (int i = 0; i <= stackCount; ++i) {
+		float stackAngle = glm::pi<float>() / 2 - i * glm::pi<float>() / stackCount;
+		float xy = radius * cosf(stackAngle);
+		float z = radius * sinf(stackAngle);
+
+		for (int j = 0; j <= sectorCount; ++j) {
+			float sectorAngle = j * 2 * glm::pi<float>() / sectorCount;
+			float x = xy * cosf(sectorAngle);
+			float y = xy * sinf(sectorAngle);
+
+			sphereVertices.push_back(x);
+			sphereVertices.push_back(y);
+			sphereVertices.push_back(z);
+
+            sphereVertices.push_back((x / radius + 1.0f) * 0.5f);
+            sphereVertices.push_back((y / radius + 1.0f) * 0.5f);
+            sphereVertices.push_back(0.8f);
+		}
+	}
+
+    for (int i = 0; i < stackCount; ++i) {
+		int k1 = i * (sectorCount + 1);
+		int k2 = k1 + sectorCount + 1;
+
+        for (int j = 0; j < sectorCount; ++j, ++k1, ++k2) {
+            if (i != 0) {
+                sphereIndices.push_back(k1);
+                sphereIndices.push_back(k2);
+                sphereIndices.push_back(k1 + 1);
+            }
+            if (i != stackCount - 1) {
+                sphereIndices.push_back(k1 + 1);
+                sphereIndices.push_back(k2);
+                sphereIndices.push_back(k2 + 1);
+            }
+        }
+    }
+
+    unsigned int sphereVBO, sphereVAO, sphereEBO;
+    glGenVertexArrays(1, &sphereVAO);
+    glGenBuffers(1, &sphereVBO);
+    glGenBuffers(1, &sphereEBO);
+
+    glBindVertexArray(sphereVAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, sphereVBO);
+    glBufferData(GL_ARRAY_BUFFER, sphereVertices.size() * sizeof(float), sphereVertices.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sphereEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sphereIndices.size() * sizeof(unsigned int), sphereIndices.data(), GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+	float pyramidVertices[] = {
+        // Positions          // Colors
+         0.3f, 0.0f, -0.3f,   0.2f, 1.0f, 0.2f,
+         0.3f, 0.0f,  0.3f,   0.2f, 0.2f, 1.0f,
+        -0.3f, 0.0f,  0.3f,   1.0f, 1.0f, 0.2f,
+         0.0f, 0.6f,  0.0f,   1.0f, 0.5f, 1.0f
+	};
+
+    unsigned int pyramidIndices[] = {
+        0, 1, 2,
+        0, 3, 2,
+        2, 3, 1,
+        1, 0, 3,
+    };
+
+    unsigned int pyramidVBO, pyramidVAO, pyramidEBO;
+    glGenVertexArrays(1, &pyramidVAO);
+    glGenBuffers(1, &pyramidVBO);
+    glGenBuffers(1, &pyramidEBO);
+
+    glBindVertexArray(pyramidVAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, pyramidVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(pyramidVertices), pyramidVertices, GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, pyramidEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(pyramidIndices), pyramidIndices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glBindVertexArray(0);
+    checkGlError("Buffer Setups");
+
+    GLint projLoc = glGetUniformLocation(shaderProgram, "projection");
+    GLint timeLoc = glGetUniformLocation(shaderProgram, "uTime");
+    GLint objTypeLoc = glGetUniformLocation(shaderProgram, "uObjectType");
+    GLint basePosLoc = glGetUniformLocation(shaderProgram, "uBasePosition");
 
     while (!glfwWindowShouldClose(window)) {
 		processInput(window);
 
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glUseProgram(shaderProgram);
-        glBindVertexArray(VAO);
 
-        if (roofColorToggle)
-            glUniform4f(colorLocation, 1.0f, 0.5f, 0.0f, 1.0f);
-        else
-            glUniform4f(colorLocation, 1.0f, 0.0f, 0.0f, 1.0f);
-        drawTriangle(-0.9f, 0.2f, 0.9f, 0.2f, 0.0f, 0.9f, anchorLoc, xAxisLoc, yAxisLoc);
+		float currentTime = static_cast<float>(glfwGetTime());
+        glUniform1f(timeLoc, currentTime);
 
-        glUniform4f(colorLocation, 0.0f, 1.0f, 0.0f, 1.0f);
-        drawRectangle(-0.6f, -0.8f, 1.2f, 1.0f, anchorLoc, xAxisLoc, yAxisLoc);
+        glm::mat4 projection(1.0f);
+        if (isPerspective) {
+			projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+			projection = glm::translate(projection, glm::vec3(0.0f, 0.0f, -4.5f));
+        }
+        else {
+			projection = glm::ortho(-2.0f, 2.0f, -1.5f, 1.5f, 0.1f, 100.0f);
+			projection = glm::translate(projection, glm::vec3(0.0f, 0.0f, -4.5f));
+        }
 
-        glUniform4f(colorLocation, 0.0f, 0.0f, 1.0f, 1.0f);
-        drawRectangle(-0.15f, -0.8f, 0.3f, 0.5f, anchorLoc, xAxisLoc, yAxisLoc);
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
-        glUniform4f(colorLocation, 1.0f, 1.0f, 0.0f, 1.0f);
-        drawRectangle(-0.5f, -0.2f, 0.3f, 0.3f, anchorLoc, xAxisLoc, yAxisLoc);
+        glBindVertexArray(cubeVAO);
 
-        glUniform4f(colorLocation, 1.0f, 1.0f, 0.0f, 1.0f);
-        drawRectangle(0.2f, -0.2f, 0.3f, 0.3f, anchorLoc, xAxisLoc, yAxisLoc);
+        glUniform1i(objTypeLoc, 0);
+        glUniform3f(basePosLoc, -1.2f, 0.6f, 0.0f);
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
 
-        glUniform4f(colorLocation, 0.1f, 0.1f, 0.1f, 1.0f);
-        drawRectangle(0.2f, 0.4f, 0.3f, 0.6f, anchorLoc, xAxisLoc, yAxisLoc);
+        glUniform1i(objTypeLoc, 1);
+        glUniform3f(basePosLoc, -1.2f, -0.6f, 0.0f);
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+
+
+        glBindVertexArray(sphereVAO);
+
+        glUniform1i(objTypeLoc, 2);
+        glUniform3f(basePosLoc, 0.0f, 0.6f, 0.0f);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sphereIndices.size()), GL_UNSIGNED_INT, 0);
+
+        glUniform1i(objTypeLoc, 3);
+        glUniform3f(basePosLoc, 0.0f, -0.6f, 0.0f);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sphereIndices.size()), GL_UNSIGNED_INT, 0);
+
+
+		glBindVertexArray(pyramidVAO);
+
+        glUniform1i(objTypeLoc, 4);
+        glUniform3f(basePosLoc, 1.2f, 0.3f, 0.0f);
+        glDrawElements(GL_TRIANGLES, 18, GL_UNSIGNED_INT, 0);
+
+        glUniform1i(objTypeLoc, 5);
+        glUniform3f(basePosLoc, 1.2f, -0.9f, 0.0f);
+        glDrawElements(GL_TRIANGLES, 18, GL_UNSIGNED_INT, 0);
 
         glBindVertexArray(0);
+
         checkGlError("Render Loop");
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
+    glDeleteVertexArrays(1, &cubeVAO);
+    glDeleteBuffers(1, &cubeVBO);
+    glDeleteBuffers(1, &cubeEBO);
+
+    glDeleteVertexArrays(1, &sphereVAO);
+    glDeleteBuffers(1, &sphereVBO);
+    glDeleteBuffers(1, &sphereEBO);
+
+    glDeleteVertexArrays(1, &pyramidVAO);
+    glDeleteBuffers(1, &pyramidVBO);
+    glDeleteBuffers(1, &pyramidEBO);
+
     glDeleteProgram(shaderProgram);
 
     glfwTerminate();
     return 0;
-}
-
-void drawTriangle(float x1, float y1, float x2, float y2, float x3, float y3, GLint anchorLoc, GLint xAxisLoc, GLint yAxisLoc)
-{
-    glUniform2f(anchorLoc, x1, y1);
-    glUniform2f(xAxisLoc, x2 - x1, y2 - y1);
-    glUniform2f(yAxisLoc, x3 - x1, y3 - y1);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-}
-
-void drawRectangle(float x, float y, float width, float height, GLint anchorLoc, GLint xAxisLoc, GLint yAxisLoc)
-{
-    drawTriangle(x, y, x + width, y, x, y + height, anchorLoc, xAxisLoc, yAxisLoc);
-    drawTriangle(x + width, y, x + width, y + height, x, y + height, anchorLoc, xAxisLoc, yAxisLoc);
 }
 
 void processInput(GLFWwindow* window)
@@ -183,10 +323,11 @@ void processInput(GLFWwindow* window)
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
-    static bool spacePressedLastFrame = false;
     bool spacePressedThisFrame = (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS);
-    if (spacePressedThisFrame && !spacePressedLastFrame)
-        roofColorToggle = !roofColorToggle;
+    if (spacePressedThisFrame && !spacePressedLastFrame) {
+        isPerspective = !isPerspective;
+        std::cout << (isPerspective ? "Perspective" : "Orthographic") << std::endl;
+    }
     spacePressedLastFrame = spacePressedThisFrame;
 }
 
@@ -199,6 +340,22 @@ void checkGlError(const std::string& context)
 {
     GLenum err;
     while ((err = glGetError()) != GL_NO_ERROR) {
-        std::cout << "OpenGL Error (" << context << "): " << err << std::endl;
+        std::cout << "OpenGL Error (" << context << "): code" << err << std::endl;
     }
+}
+
+std::string LoadShader(const char* aPath)
+{
+    std::string shaderCode;
+    std::ifstream shaderFile;
+
+    shaderFile.open(aPath);
+
+    std::stringstream shaderStream;
+    shaderStream << shaderFile.rdbuf();
+
+    shaderFile.close();
+    shaderCode = shaderStream.str();
+
+    return shaderCode;
 }
